@@ -1,0 +1,13 @@
+# exclude_rules.txt
+/home/user/documents/temp
+/home/user/photos/drafts
+*.tmp
+*.cache
+/sys
+/dev
+/run
+/tmp
+/proc
+.*
+
+!.zshrc
