@@ -15,6 +15,7 @@ export RCLONE_CHECKERS=$RCLONE_CHECKERS
 
 backup_success=true
 cleanup_success=true
+LAST_NOTIFY_FILE="last_notify_time"
 
 # Function to send Telegram notification
 send_telegram() {
@@ -25,6 +26,25 @@ send_telegram() {
     fi
     if ! curl -s -X POST https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage -d chat_id=$TELEGRAM_CHAT_ID -d text="$message" > /dev/null; then
         echo "Warning: Failed to send Telegram notification."
+    fi
+}
+
+# Function to send daily summary notification
+send_daily_summary() {
+    local message=$1
+    local current_time=$(date +%s)
+
+    if [[ ! -f "$LAST_NOTIFY_FILE" ]]; then
+        echo $current_time > "$LAST_NOTIFY_FILE"
+        send_telegram "$message"
+    else
+        local last_notify_time=$(cat "$LAST_NOTIFY_FILE")
+        if (( current_time - last_notify_time >= 86400 )); then
+            echo $current_time > "$LAST_NOTIFY_FILE"
+            send_telegram "$message"
+        else
+            echo "Backup succeeded but daily notification already sent."
+        fi
     fi
 }
 
@@ -74,7 +94,7 @@ operation_summary() {
 
     if $backup_success; then
         local backup_stats=$(restic -r "$RESTIC_REPOSITORY" --password-file "$PASSWORD_FILE" stats | awk '/Stats in restore-size mode:/,0')
-        message+="🎉 Backup completed successfully at $end_time 🎉\n"
+        message+="🎉 Backup completed successfully at $end_time\n"
         message+="💾 Repository: $RESTIC_REPOSITORY\n"
         message+="🤖 Backup Stats:\n$backup_stats\n\n"
     else
@@ -90,7 +110,13 @@ operation_summary() {
         message+="❌ Cleanup failed at $end_time ❌\nCheck log $LOG_FILE for details.\n"
     fi
 
-    send_telegram "$message"
+    if ! $backup_success || ! $cleanup_success; then
+        # 立即发送失败消息
+        send_telegram "$message"
+    else
+        # 每日一次成功消息
+        send_daily_summary "$message"
+    fi
 }
 
 # Main execution
