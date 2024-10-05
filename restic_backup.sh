@@ -57,7 +57,7 @@ backup() {
 
 # Retrieve hostname and IP address
 HOSTNAME=$(hostname)
-IP_ADDRESS=$(curl -s ip.sb)
+IP_ADDRESS=$(curl -4 -s ip.sb)
 
 # Function to summarize backup operation and send Telegram notification
 backup_summary() {
