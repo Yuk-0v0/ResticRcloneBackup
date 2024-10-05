@@ -14,6 +14,7 @@ export RCLONE_TRANSFERS=$RCLONE_TRANSFERS
 export RCLONE_CHECKERS=$RCLONE_CHECKERS
 
 backup_success=true
+cleanup_success=true
 
 # Function to send Telegram notification
 send_telegram() {
@@ -54,44 +55,55 @@ backup() {
     backup_success=false
 }
 
+# Cleanup function
+cleanup_snapshots() {
+    echo "Starting cleanup process at $(date +"%Y-%m-%d %H:%M:%S")" >> "$LOG_FILE"
 
-# Retrieve hostname and IP address
-HOSTNAME=$(hostname)
-IP_ADDRESS=$(curl -4 -s ip.sb)
-
-# Function to summarize backup operation and send Telegram notification
-backup_summary() {
-    local end_time=$(date +"%Y-%m-%d %H:%M:%S")
-    if $backup_success; then
-        local stats_output=$(restic -r "$RESTIC_REPOSITORY" --password-file "$PASSWORD_FILE" stats | awk '/Stats in restore-size mode:/,0')
-        echo "All backups completed successfully at $end_time" >> "$LOG_FILE"
-        send_telegram "🎉 Backup completed successfully at $end_time 🎉
-🖥️ Hostname: $HOSTNAME
-🌐 IP Address: $IP_ADDRESS
-💾 Repository: $RESTIC_REPOSITORY
-🤖 Repository Stats: 
-
-$stats_output"
+    if restic -r "$RESTIC_REPOSITORY" --password-file "$PASSWORD_FILE" forget --keep-last "$KEEP_SNAPSHOTS" --prune 2>>"$LOG_FILE"; then
+        echo "Cleanup completed successfully at $(date +"%Y-%m-%d %H:%M:%S"). Kept the last $KEEP_SNAPSHOTS snapshots." >> "$LOG_FILE"
     else
-        echo "One or more backups failed at $end_time, see log $LOG_FILE for details." >> "$LOG_FILE"
-        send_telegram "❌ Backup failed at $end_time ❌
-🖥️ Hostname: $HOSTNAME
-🌐 IP Address: $IP_ADDRESS
-💾 Repository: $RESTIC_REPOSITORY
-Check log $LOG_FILE for details."
+        echo "Cleanup failed at $(date +"%Y-%m-%d %H:%M:%S"), see log for details." >> "$LOG_FILE"
+        cleanup_success=false
     fi
 }
 
-echo "Starting backup process at $(date +"%Y-%m-%d %H:%M:%S")" >> "$LOG_FILE"
+# Function to summarize backup and cleanup, and send Telegram notification
+operation_summary() {
+    local end_time=$(date +"%Y-%m-%d %H:%M:%S")
+    local message=""
 
+    if $backup_success; then
+        local backup_stats=$(restic -r "$RESTIC_REPOSITORY" --password-file "$PASSWORD_FILE" stats | awk '/Stats in restore-size mode:/,0')
+        message+="🎉 Backup completed successfully at $end_time 🎉\n"
+        message+="💾 Repository: $RESTIC_REPOSITORY\n"
+        message+="🤖 Backup Stats:\n$backup_stats\n\n"
+    else
+        message+="❌ Backup failed at $end_time ❌\nCheck log $LOG_FILE for details.\n\n"
+    fi
+
+    if $cleanup_success; then
+        local cleanup_stats=$(restic -r "$RESTIC_REPOSITORY" --password-file "$PASSWORD_FILE" stats | awk '/Stats in restore-size mode:/,0')
+        message+="🧹 Cleanup completed successfully at $end_time\n"
+        message+="Kept the last $KEEP_SNAPSHOTS snapshots.\n"
+        message+="🤖 Cleanup Stats:\n$cleanup_stats\n"
+    else
+        message+="❌ Cleanup failed at $end_time ❌\nCheck log $LOG_FILE for details.\n"
+    fi
+
+    send_telegram "$message"
+}
+
+# Main execution
+echo "Starting backup process at $(date +"%Y-%m-%d %H:%M:%S")" >> "$LOG_FILE"
 backup
 
 if ! $backup_success; then
     echo "Performing detailed check due to previous failures..." >> "$LOG_FILE"
     restic -r "$RESTIC_REPOSITORY" --password-file "$PASSWORD_FILE" check >> "$LOG_FILE" 2>&1
-    send_telegram "Restic repository check performed due to backup failure. Check log $LOG_FILE for details."
-else
-    echo "Skipping detailed check as all backups were successful." >> "$LOG_FILE"
 fi
 
-backup_summary
+echo "Starting cleanup process..." >> "$LOG_FILE"
+cleanup_snapshots
+
+# Send summary notification
+operation_summary
